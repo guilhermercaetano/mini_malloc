@@ -1,0 +1,10 @@
+# debug files
+**/*.pdb
+
+#ilk files
+**/*.ilk
+
+#obj files
+**/*.obj
+
+start.bat
