@@ -11,3 +11,12 @@ that are multiple of this value.
 
 The memory block splits after the allocation is performed, and it coalesces when 
 the user frees some block, to avoid excessive fragmentation.
+
+### How to compile this project
+
+````
+The script build.bat contains the compilation script. But if you need a minimal compilation:
+
+```
+cl /DRUN_STANDALONE mini_malloc.c /link kernel32.lib
+```

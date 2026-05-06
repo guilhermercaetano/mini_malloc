@@ -8,19 +8,16 @@ typedef int b32;
 #endif
 
 #define ALIGNMENT 16
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
+#define BLOCK_SIZE ALIGN(sizeof(Block))
 
-// Pack struct so it can be aligned correctly
-#pragma pack(push, 1)
+static CRITICAL_SECTION lock;
+
 typedef struct Block {
   size_t size;
   b32 free;
   struct Block *next;
-
-  // Padding to ensure alignment
-  char align[ALIGNMENT -
-             ((sizeof(size_t) + sizeof(b32) + sizeof(void *)) % ALIGNMENT)];
 } Block;
-#pragma pack(pop)
 
 static Block *global_free_list = NULL;
 
@@ -35,6 +32,8 @@ size_t align_forward(size_t ptr, size_t alignment) {
 }
 
 void allocate_init(size_t size) {
+  InitializeCriticalSection(&lock);
+
   void *memory_block =
       VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
@@ -54,9 +53,13 @@ void allocate_end(void) {
     VirtualFree(global_free_list, 0, MEM_RELEASE);
     global_free_list = NULL;
   }
+
+  DeleteCriticalSection(&lock);
 }
 
 void *mini_malloc(size_t size) {
+  EnterCriticalSection(&lock);
+
   size_t aligned_size = align_forward(size, ALIGNMENT);
 
   Block *block_aux = global_free_list;
@@ -69,30 +72,29 @@ void *mini_malloc(size_t size) {
         block_aux->free = FALSE;
         block_aux->size = aligned_size;
 
-        char *block_header_unaligned_address =
-            (char *)(block_aux + 1) + aligned_size;
-        char *block_header_aligned_address = (char *)align_forward(
-            (size_t)block_header_unaligned_address, ALIGNMENT);
-        Block *new_block = (Block *)block_header_aligned_address;
-
-        size_t padding =
-            block_header_aligned_address - block_header_unaligned_address;
+        Block *new_block =
+            (Block *)((char *)(block_aux + 1) + BLOCK_SIZE + aligned_size);
 
         new_block->next = block_aux->next;
         new_block->free = TRUE;
-        new_block->size =
-            old_block_size - aligned_size - sizeof(Block) - padding;
+
+        // Size of block will be always aligned, so this .
+        new_block->size = old_block_size - aligned_size - sizeof(Block);
 
         block_aux->next = new_block;
 
+        LeaveCriticalSection(&lock);
         return (void *)(block_aux + 1);
       } else {
         block_aux->free = FALSE;
+
+        LeaveCriticalSection(&lock);
         return (void *)(block_aux + 1);
       }
     }
   }
 
+  LeaveCriticalSection(&lock);
   return NULL;
 }
 
@@ -100,6 +102,8 @@ void mini_free(void *ptr) {
   if (!ptr) {
     return;
   }
+
+  EnterCriticalSection(&lock);
 
   Block *block = (Block *)ptr - 1;
   block->free = TRUE;
@@ -118,20 +122,28 @@ void mini_free(void *ptr) {
 
   // Merge backward
   if (current && current->free) {
-    current->size = current->size + block->size;
+    current->size = current->size + block->size + sizeof(Block);
     current->next = block->next;
   }
+
+  LeaveCriticalSection(&lock);
 }
 
-#ifdef RUN_STANDALONE
+#if RUN_STANDALONE
 int main(int argc, char **argv) {
   int allocation_size = 4 * 1024 * 1024;
   allocate_init(allocation_size);
 
+  printf("Allocate 100 bytes\n");
   void *p1 = mini_malloc(100);
+
+  printf("Allocate 100 bytes\n");
   void *p2 = mini_malloc(100);
 
+  printf("Free 100 bytes\n");
   mini_free(p2);
+
+  printf("Free 100 bytes\n");
   mini_free(p1);
 
   allocate_end();
