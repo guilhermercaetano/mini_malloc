@@ -1,4 +1,14 @@
+#include <assert.h>
 #include <windows.h>
+
+// NOTE: inline compatibility with C89
+#if __STDC_VERSION__ < 199901L 
+#  if defined(_MSC_VER)
+#    define inline __inline
+#  else
+#    define inline
+#  endif
+#endif
 
 typedef int b32;
 #define TRUE 1
@@ -21,6 +31,33 @@ typedef struct Block {
 
 static Block *global_free_list = NULL;
 
+#define KILO(size) size * 1024
+#define MEGA(size) KILO(size) * 1024
+
+typedef enum {
+  BUCKET_16B   = 16, 
+  BUCKET_32B   = 32, 
+  BUCKET_48B   = 48, 
+  BUCKET_64B   = 64, 
+  BUCKET_128B  = 128, 
+  BUCKET_256B  = 256, 
+  BUCKET_512B  = 512,
+  BUCKET_1KB   = KILO(1), 
+  BUCKET_2KB   = KILO(2), 
+  BUCKET_4KB   = KILO(4), 
+  BUCKET_8KB   = KILO(8), 
+  BUCKET_16KB  = KILO(16), 
+  BUCKET_32KB  = KILO(32), 
+  BUCKET_64KB  = KILO(64),
+  BUCKET_128KB = KILO(128), 
+  BUCKET_256KB = KILO(256), 
+  BUCKET_512KB = KILO(512), 
+  BUCKET_1MB   = MEGA(1), 
+  BUCKET_2MB   = MEGA(2), 
+  BUCKET_4MB   = MEGA(4)
+} Bucket_Sizes;
+
+// NOTE: Since we are allocating always selecting a bucket size 
 size_t align_forward(size_t ptr, size_t alignment) {
   size_t modulo = ptr % alignment;
 
@@ -29,6 +66,29 @@ size_t align_forward(size_t ptr, size_t alignment) {
   }
 
   return ptr;
+}
+
+inline int find_bucket_to_fit(size_t size) {
+  if (size <= BUCKET_16B) return BUCKET_16B;
+  if (size <= BUCKET_32B) return BUCKET_32B;
+  if (size <= BUCKET_64B) return BUCKET_64B;
+  if (size <= BUCKET_128B) return BUCKET_128B;
+  if (size <= BUCKET_256B) return BUCKET_256B;
+  if (size <= BUCKET_512B) return BUCKET_512B;
+  if (size <= BUCKET_1KB) return BUCKET_1KB;
+  if (size <= BUCKET_2KB) return BUCKET_2KB;
+  if (size <= BUCKET_4KB) return BUCKET_4KB;
+  if (size <= BUCKET_8KB) return BUCKET_8KB;
+  if (size <= BUCKET_16KB) return BUCKET_16KB;
+  if (size <= BUCKET_32KB) return BUCKET_32KB;
+  if (size <= BUCKET_64KB) return BUCKET_64KB;
+  if (size <= BUCKET_128KB) return BUCKET_128KB;
+  if (size <= BUCKET_256KB) return BUCKET_256KB;
+  if (size <= BUCKET_512KB) return BUCKET_512KB;
+  if (size <= BUCKET_1MB) return BUCKET_1MB;
+  if (size <= BUCKET_2MB) return BUCKET_4MB;
+  if (size <= BUCKET_4MB) return BUCKET_4MB;
+  return -1;
 }
 
 void allocate_init(size_t size) {
@@ -58,9 +118,13 @@ void allocate_end(void) {
 }
 
 void *mini_malloc(size_t size) {
+  int size_bucket_fit = find_bucket_to_fit(size);
+
+  if (size_bucket_fit == -1) return 0;
+
   EnterCriticalSection(&lock);
 
-  size_t aligned_size = align_forward(size, ALIGNMENT);
+  size_t aligned_size = size_bucket_fit;
 
   Block *block_aux = global_free_list;
   for (; block_aux; block_aux = block_aux->next) {
@@ -129,8 +193,8 @@ void mini_free(void *ptr) {
   LeaveCriticalSection(&lock);
 }
 
-#if RUN_STANDALONE
-int main(int argc, char **argv) {
+// New allocations should first fit
+void test_two_allocation_reuse_memory() {
   int allocation_size = 4 * 1024 * 1024;
   allocate_init(allocation_size);
 
@@ -140,14 +204,21 @@ int main(int argc, char **argv) {
   printf("Allocate 100 bytes\n");
   void *p2 = mini_malloc(100);
 
-  printf("Free 100 bytes\n");
-  mini_free(p2);
-
-  printf("Free 100 bytes\n");
   mini_free(p1);
 
-  allocate_end();
+  void *p3 = mini_malloc(100);
 
+  assert(p1 == p3);
+
+  mini_free(p2);
+  mini_free(p3);
+
+  allocate_end();
+}
+
+#if RUN_STANDALONE
+int main(int argc, char **argv) {
+  test_two_allocation_reuse_memory();
   return 0;
 }
 #endif
