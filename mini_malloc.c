@@ -29,7 +29,15 @@ typedef struct Block {
   struct Block *next;
 } Block;
 
+typedef struct AllocatorStats {
+  uint32_t total_free_memory;
+  Block *largest_free_block;
+  float external_fragmentation;
+} AllocatorStats;
+
 static Block *global_free_list = NULL;
+
+AllocatorStats allocator_stats;
 
 #define KILO(size) size * 1024
 #define MEGA(size) KILO(size) * 1024
@@ -94,6 +102,9 @@ inline int find_bucket_to_fit(size_t size) {
 void allocate_init(size_t size) {
   InitializeCriticalSection(&lock);
 
+  allocator_stats.total_free_memory = 0;
+  allocator_stats.largest_free_block = NULL;
+
   void *memory_block =
       VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
@@ -106,12 +117,20 @@ void allocate_init(size_t size) {
   global_free_list->size = size - sizeof(Block);
   global_free_list->free = TRUE;
   global_free_list->next = NULL;
+
+  allocator_stats.largest_free_block = global_free_list;
+  allocator_stats.total_free_memory = global_free_list->size;
+  allocator_stats.external_fragmentation = 0;
 }
 
 void allocate_end(void) {
   if (global_free_list) {
     VirtualFree(global_free_list, 0, MEM_RELEASE);
     global_free_list = NULL;
+
+    allocator_stats.largest_free_block = NULL;
+    allocator_stats.total_free_memory = 0;
+    allocator_stats.external_fragmentation = 0;
   }
 
   DeleteCriticalSection(&lock);
@@ -146,6 +165,15 @@ void *mini_malloc(size_t size) {
         new_block->size = old_block_size - aligned_size - sizeof(Block);
 
         block_aux->next = new_block;
+
+        // NOTE: if largest free block is now occupied, that means the largest free
+        // block was splitted. So it must be updated to reflect the new
+        // largest block
+        if (block_aux == allocator_stats.largest_free_block) {
+          allocator_stats.largest_free_block = new_block;
+          allocator_stats.total_free_memory -= (old_block_size - new_block->size);
+          allocator_stats.external_fragmentation = 1 - (new_block->size) / allocatot_stats.total_free_memory;
+        }
 
         LeaveCriticalSection(&lock);
         return (void *)(block_aux + 1);
