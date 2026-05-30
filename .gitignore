@@ -11,3 +11,5 @@
 **/*.rdi
 
 start.bat
+
+*.exe
